@@ -1,0 +1,18 @@
+codeql query run \
+  --search-path=/Users/vgupta/IdeaProjects/codeql-repo \
+  --database=/Users/vgupta/IdeaProjects/codeQL_DB \
+  --output=/Users/vgupta/Downloads/codesage/data/touchpoints.bqrs \
+  /Users/vgupta/Downloads/codesage/data/touchpoints.ql
+
+codeql bqrs decode \
+    --format=csv \
+    --output=/Users/vgupta/Downloads/codesage/data/touchpoints.csv \
+    /Users/vgupta/Downloads/codesage/data/touchpoints.bqrs
+
+    select pg_terminate_backend(11117);
+
+
+    jdbcTemplate.update("delete from stg_call_edges where scan_run_id = ?", scanRunId);
+    jdbcTemplate.update("delete from stg_api_endpoints where scan_run_id = ?", scanRunId);
+    jdbcTemplate.update("delete from stg_touchpoints where scan_run_id = ?", scanRunId);
+    jdbcTemplate.update("delete from stg_flow_edges where scan_run_id = ?", scanRunId);
