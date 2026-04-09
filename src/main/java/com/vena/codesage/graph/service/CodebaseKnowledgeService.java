@@ -1,18 +1,31 @@
 package com.vena.codesage.graph.service;
 
-import com.vena.codesage.dto.*;
+import com.vena.codesage.dto.CodeEntitySearchResultDto;
+import com.vena.codesage.dto.EndpointSearchResultDto;
+import com.vena.codesage.dto.KnowledgeMode;
+import com.vena.codesage.dto.KnowledgeResponseDto;
+import com.vena.codesage.dto.KnowledgeResultItemDto;
+import com.vena.codesage.dto.SemanticSearchResultDto;
+import com.vena.codesage.dto.TraceDirection;
+import com.vena.codesage.integration.confluence.ConfluenceKnowledgeService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
 public class CodebaseKnowledgeService {
+
+    private static final Logger log = LoggerFactory.getLogger(CodebaseKnowledgeService.class);
 
     private static final int DEFAULT_LIMIT = 10;
     private static final int MAX_LIMIT = 50;
@@ -21,14 +34,19 @@ public class CodebaseKnowledgeService {
     private final SemanticDocumentBuilderService semanticDocumentBuilderService;
     private final EndpointSearchService endpointSearchService;
     private final ReverseTraversalService reverseTraversalService;
+    private final Map<KnowledgeMode, Function<QueryContext, List<KnowledgeResultItemDto>>> handlers;
+    private final ConfluenceKnowledgeService confluenceKnowledgeService;
 
     public CodebaseKnowledgeService(CodeEntityService codeEntityService,
                                     SemanticDocumentBuilderService semanticDocumentBuilderService,
-                                    EndpointSearchService endpointSearchService, ReverseTraversalService reverseTraversalService) {
+                                    EndpointSearchService endpointSearchService,
+                                    ReverseTraversalService reverseTraversalService, ConfluenceKnowledgeService confluenceKnowledgeService) {
         this.codeEntityService = codeEntityService;
         this.semanticDocumentBuilderService = semanticDocumentBuilderService;
         this.endpointSearchService = endpointSearchService;
         this.reverseTraversalService = reverseTraversalService;
+        this.confluenceKnowledgeService = confluenceKnowledgeService;
+        this.handlers = buildHandlers();
     }
 
     public KnowledgeResponseDto query(String projectKey,
@@ -41,7 +59,8 @@ public class CodebaseKnowledgeService {
 
         String normalizedQuery = query == null ? "" : query.trim();
         if (normalizedQuery.isBlank()) {
-            return new KnowledgeResponseDto(
+            log.info("Knowledge query skipped for project={} because query is blank", projectKey);
+            return KnowledgeResponseDto.simple(
                     projectKey,
                     query,
                     mode == null ? KnowledgeMode.AUTO : mode,
@@ -52,36 +71,80 @@ public class CodebaseKnowledgeService {
 
         int effectiveLimit = normalizeLimit(limit);
         KnowledgeMode resolvedMode = resolveMode(normalizedQuery, mode);
+        QueryContext context = new QueryContext(
+                projectKey,
+                normalizedQuery,
+                effectiveLimit,
+                debug,
+                collapse,
+                entityType
+        );
 
-        List<KnowledgeResultItemDto> results = switch (resolvedMode) {
-            case ENDPOINT -> endpointResults(projectKey, normalizedQuery, effectiveLimit, collapse);
-            case ENTITY -> entityResults(projectKey, normalizedQuery, effectiveLimit, collapse);
-            case SEMANTIC -> semanticResults(projectKey, normalizedQuery, effectiveLimit, debug, entityType, collapse);
-            case AUTO -> autoResults(projectKey, normalizedQuery, effectiveLimit, debug, entityType, collapse);
-        };
+        log.info(
+                "Knowledge query start project={} mode={} limit={} collapse={} entityType={} debug={} query={}",
+                projectKey,
+                resolvedMode,
+                effectiveLimit,
+                collapse,
+                entityType,
+                debug,
+                normalizedQuery
+        );
+
+        long startNanos = System.nanoTime();
+        List<KnowledgeResultItemDto> results = execute(resolvedMode, context);
+        long elapsedMillis = (System.nanoTime() - startNanos) / 1_000_000;
+
+        log.info(
+                "Knowledge query complete project={} mode={} results={} elapsedMs={}",
+                projectKey,
+                resolvedMode,
+                results.size(),
+                elapsedMillis
+        );
 
         return new KnowledgeResponseDto(
                 projectKey,
                 query,
                 resolvedMode,
                 buildSummary(resolvedMode, normalizedQuery, results),
-                results
+                results,
+                results.size(),
+                extractSources(results),
+                elapsedMillis
         );
     }
 
-    private List<KnowledgeResultItemDto> autoResults(String projectKey,
-                                                     String query,
-                                                     int limit,
-                                                     boolean debug,
-                                                     String entityType,
-                                                     boolean collapse) {
-        KnowledgeMode autoMode = resolveAutomaticMode(query);
+    private Map<KnowledgeMode, Function<QueryContext, List<KnowledgeResultItemDto>>> buildHandlers() {
+        EnumMap<KnowledgeMode, Function<QueryContext, List<KnowledgeResultItemDto>>> map =
+                new EnumMap<>(KnowledgeMode.class);
+
+        map.put(KnowledgeMode.AUTO, this::autoResults);
+        map.put(KnowledgeMode.ENDPOINT, this::endpointResults);
+        map.put(KnowledgeMode.ENTITY, this::entityResults);
+        map.put(KnowledgeMode.SEMANTIC, this::semanticResults);
+
+        return Map.copyOf(map);
+    }
+
+    private List<KnowledgeResultItemDto> execute(KnowledgeMode mode, QueryContext context) {
+        Function<QueryContext, List<KnowledgeResultItemDto>> handler = handlers.get(mode);
+        if (handler == null) {
+            log.warn("No handler configured for mode={}, falling back to semantic", mode);
+            return semanticResults(context);
+        }
+        return handler.apply(context);
+    }
+
+    private List<KnowledgeResultItemDto> autoResults(QueryContext context) {
+        KnowledgeMode autoMode = resolveAutomaticMode(context.query());
+
+        log.debug("AUTO mode resolved to {} for query={}", autoMode, context.query());
 
         List<KnowledgeResultItemDto> primary = switch (autoMode) {
-            case ENDPOINT -> endpointResults(projectKey, query, limit, collapse);
-            case ENTITY -> entityResults(projectKey, query, limit, collapse);
-            case SEMANTIC -> semanticResults(projectKey, query, limit, debug, entityType, collapse);
-            default -> semanticResults(projectKey, query, limit, debug, entityType, collapse);
+            case ENDPOINT -> endpointResults(context);
+            case ENTITY -> entityResults(context);
+            case SEMANTIC, AUTO -> semanticResults(context);
         };
 
         if (!primary.isEmpty()) {
@@ -89,23 +152,34 @@ public class CodebaseKnowledgeService {
         }
 
         if (autoMode != KnowledgeMode.SEMANTIC) {
-            return semanticResults(projectKey, query, limit, debug, entityType, collapse);
+            log.debug("AUTO primary mode {} returned no results, falling back to SEMANTIC", autoMode);
+            return semanticResults(context);
         }
 
         return List.of();
     }
 
-    private List<KnowledgeResultItemDto> endpointResults(String projectKey,
-                                                         String query,
-                                                         int limit,
-                                                         boolean collapse) {
-        List<EndpointSearchResultDto> raw = endpointSearchService.search(projectKey, query, limit * 10, false);
+    private List<KnowledgeResultItemDto> endpointResults(QueryContext context) {
+        List<EndpointSearchResultDto> raw = endpointSearchService.search(
+                context.projectKey(),
+                context.query(),
+                context.limit() * 10,
+                false
+        );
 
-        if (looksLikePathQuery(query)) {
-            raw = rankRawEndpointPathResults(raw, query);
+        log.debug(
+                "Endpoint search returned {} raw results for project={} query={}",
+                raw.size(),
+                context.projectKey(),
+                context.query()
+        );
 
-            List<KnowledgeResultItemDto> grouped = groupExactPathMatches(raw, query, limit);
+        if (looksLikePathQuery(context.query())) {
+            raw = rankRawEndpointPathResults(raw, context.query());
+
+            List<KnowledgeResultItemDto> grouped = groupExactPathMatches(raw, context.query(), context.limit());
             if (!grouped.isEmpty()) {
+                log.debug("Endpoint exact path grouping produced {} grouped results", grouped.size());
                 return grouped;
             }
         }
@@ -114,69 +188,89 @@ public class CodebaseKnowledgeService {
                 .map(this::toEndpointItem)
                 .toList();
 
-        if (collapse) {
+        if (context.collapse()) {
             mapped = collapseByIdentity(mapped);
         }
 
-        return mapped.stream().limit(limit).toList();
+        return mapped.stream()
+                .limit(context.limit())
+                .toList();
     }
 
-    private List<KnowledgeResultItemDto> entityResults(String projectKey,
-                                                       String query,
-                                                       int limit,
-                                                       boolean collapse) {
+    private List<KnowledgeResultItemDto> entityResults(QueryContext context) {
         List<CodeEntitySearchResultDto> raw = codeEntityService.search(
-                projectKey,
-                query,
+                context.projectKey(),
+                context.query(),
                 true,
                 true,
-                limit * 8
+                context.limit() * 8
         );
 
-        if (looksLikeClassQuery(query)) {
-            raw = filterEntityMatchesForClassQuery(raw, query);
+        log.debug(
+                "Entity search returned {} raw results for project={} query={}",
+                raw.size(),
+                context.projectKey(),
+                context.query()
+        );
+
+        if (looksLikeClassQuery(context.query())) {
+            raw = filterEntityMatchesForClassQuery(raw, context.query());
         }
 
-        if (collapse && looksLikeClassQuery(query)) {
-            return collapseEntityMatchesToClassCards(raw, limit);
+        if (context.collapse() && looksLikeClassQuery(context.query())) {
+            return collapseEntityMatchesToClassCards(raw, context.limit());
         }
 
         List<KnowledgeResultItemDto> mapped = raw.stream()
                 .map(this::toEntityItem)
                 .toList();
 
-        if (collapse) {
+        if (context.collapse()) {
             mapped = collapseByLocationAndTitle(mapped);
         }
 
-        return mapped.stream().limit(limit).toList();
+        return mapped.stream()
+                .limit(context.limit())
+                .toList();
     }
 
-    private List<KnowledgeResultItemDto> semanticResults(String projectKey,
-                                                         String query,
-                                                         int limit,
-                                                         boolean debug,
-                                                         String entityType,
-                                                         boolean collapse) {
-        List<SemanticSearchResultDto> raw = semanticDocumentBuilderService.searchActiveScan(
-                projectKey,
-                query,
-                limit * 4,
-                true,
-                true,
-                entityType,
-                debug
-        );
-
-        List<KnowledgeResultItemDto> mapped = raw.stream()
-                .map(item -> toSemanticItem(projectKey, item))
+    private List<KnowledgeResultItemDto> semanticResults(QueryContext context) {
+        List<KnowledgeResultItemDto> codeResults = semanticDocumentBuilderService.searchActiveScan(
+                        context.projectKey(),
+                        context.query(),
+                        context.limit() * 3,
+                        true,
+                        true,
+                        context.entityType(),
+                        context.debug()
+                ).stream()
+                .map(item -> toSemanticItem(context.projectKey(), item))
                 .toList();
 
-        if (collapse) {
-            mapped = collapseByIdentity(mapped);
+        List<KnowledgeResultItemDto> confluenceResults = confluenceKnowledgeService.search(
+                context.query(),
+                Math.max(3, context.limit() / 2)
+        );
+
+        log.debug(
+                "Semantic aggregation returned codeResults={} confluenceResults={} for project={} query={}",
+                codeResults.size(),
+                confluenceResults.size(),
+                context.projectKey(),
+                context.query()
+        );
+
+        List<KnowledgeResultItemDto> merged = new ArrayList<>(codeResults.size() + confluenceResults.size());
+        merged.addAll(codeResults);
+        merged.addAll(confluenceResults);
+
+        if (context.collapse()) {
+            merged = collapseByIdentity(merged);
         }
 
-        return mapped.stream().limit(limit).toList();
+        return rankMergedResults(merged, context.query()).stream()
+                .limit(context.limit())
+                .toList();
     }
 
     private List<CodeEntitySearchResultDto> filterEntityMatchesForClassQuery(List<CodeEntitySearchResultDto> entities,
@@ -213,7 +307,7 @@ public class CodebaseKnowledgeService {
         for (Map.Entry<String, List<CodeEntitySearchResultDto>> entry : byDeclaringType.entrySet()) {
             String className = entry.getKey();
             List<CodeEntitySearchResultDto> members = entry.getValue();
-            CodeEntitySearchResultDto representative = members.get(0);
+            CodeEntitySearchResultDto representative = members.getFirst();
 
             List<String> highlights = members.stream()
                     .map(CodeEntitySearchResultDto::qualifiedName)
@@ -224,8 +318,7 @@ public class CodebaseKnowledgeService {
                     .limit(5)
                     .toList();
 
-            cards.add(new KnowledgeResultItemDto(
-                    "ENTITY",
+            cards.add(KnowledgeResultItemDto.codeEntity(
                     className,
                     "CLASS_GROUP | " + members.size() + " matches",
                     representative.filePath(),
@@ -235,14 +328,16 @@ public class CodebaseKnowledgeService {
             ));
         }
 
-        return cards.stream().limit(limit).toList();
+        return cards.stream()
+                .limit(limit)
+                .toList();
     }
 
     private List<KnowledgeResultItemDto> collapseByIdentity(List<KnowledgeResultItemDto> results) {
         Map<String, KnowledgeResultItemDto> bestByKey = new LinkedHashMap<>();
 
         for (KnowledgeResultItemDto result : results) {
-            String key = result.resultType() + "|" + result.title() + "|" + result.subtitle();
+            String key = result.sourceType() + "|" + result.sourceId() + "|" + result.resultType() + "|" + result.title() + "|" + result.subtitle();
 
             KnowledgeResultItemDto existing = bestByKey.get(key);
             if (existing == null || score(result) > score(existing)) {
@@ -257,7 +352,7 @@ public class CodebaseKnowledgeService {
         Map<String, KnowledgeResultItemDto> bestByKey = new LinkedHashMap<>();
 
         for (KnowledgeResultItemDto result : results) {
-            String key = result.title() + "|" + result.location();
+            String key = result.sourceType() + "|" + result.sourceId() + "|" + result.title() + "|" + result.location();
 
             KnowledgeResultItemDto existing = bestByKey.get(key);
             if (existing == null || score(result) > score(existing)) {
@@ -309,8 +404,7 @@ public class CodebaseKnowledgeService {
     }
 
     private KnowledgeResultItemDto toEndpointItem(EndpointSearchResultDto endpoint) {
-        return new KnowledgeResultItemDto(
-                "ENDPOINT",
+        return KnowledgeResultItemDto.endpoint(
                 endpoint.methodQualifiedName(),
                 endpoint.httpMethod() + " " + endpoint.path(),
                 endpoint.filePath(),
@@ -321,8 +415,7 @@ public class CodebaseKnowledgeService {
     }
 
     private KnowledgeResultItemDto toEntityItem(CodeEntitySearchResultDto entity) {
-        return new KnowledgeResultItemDto(
-                "ENTITY",
+        return KnowledgeResultItemDto.codeEntity(
                 entity.qualifiedName(),
                 entity.entityType() + " | " + nullSafe(entity.signature()),
                 entity.filePath(),
@@ -333,14 +426,17 @@ public class CodebaseKnowledgeService {
     }
 
     private KnowledgeResultItemDto toSemanticItem(String projectKey, SemanticSearchResultDto semantic) {
-        return new KnowledgeResultItemDto(
-                "SEMANTIC",
+        return KnowledgeResultItemDto.semantic(
                 semantic.entityQualifiedName(),
                 semantic.entityType() + " | " + semantic.docType(),
                 semantic.filePath(),
                 semantic.preview(),
                 semantic.score(),
-                topUpstreamHighlights(projectKey, semantic.entityQualifiedName())
+                topUpstreamHighlights(projectKey, semantic.entityQualifiedName()),
+                Map.of(
+                        "entityType", semantic.entityType(),
+                        "docType", semantic.docType()
+                )
         );
     }
 
@@ -495,7 +591,7 @@ public class CodebaseKnowledgeService {
 
         for (Map.Entry<String, List<EndpointSearchResultDto>> entry : byRoute.entrySet()) {
             List<EndpointSearchResultDto> members = entry.getValue();
-            EndpointSearchResultDto representative = members.get(0);
+            EndpointSearchResultDto representative = members.getFirst();
 
             List<String> highlights = members.stream()
                     .map(EndpointSearchResultDto::methodQualifiedName)
@@ -503,8 +599,7 @@ public class CodebaseKnowledgeService {
                     .limit(10)
                     .toList();
 
-            results.add(new KnowledgeResultItemDto(
-                    "ENDPOINT_GROUP",
+            results.add(KnowledgeResultItemDto.endpoint(
                     entry.getKey(),
                     "ROUTE_GROUP | " + members.size() + " mapped methods",
                     representative.filePath(),
@@ -514,7 +609,9 @@ public class CodebaseKnowledgeService {
             ));
         }
 
-        return results.stream().limit(limit).toList();
+        return results.stream()
+                .limit(limit)
+                .toList();
     }
 
     private List<String> topUpstreamHighlights(String projectKey, String qualifiedName) {
@@ -524,8 +621,70 @@ public class CodebaseKnowledgeService {
                     .map(node -> node.qualifiedName())
                     .limit(3)
                     .toList();
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.debug(
+                    "Unable to compute upstream highlights for project={} qualifiedName={}",
+                    projectKey,
+                    qualifiedName,
+                    ex
+            );
             return List.of();
         }
     }
+
+    private record QueryContext(
+            String projectKey,
+            String query,
+            int limit,
+            boolean debug,
+            boolean collapse,
+            String entityType
+    ) {
+    }
+
+    private List<String> extractSources(List<KnowledgeResultItemDto> results) {
+        return results.stream()
+                .map(item -> item.sourceType().name())
+                .distinct()
+                .toList();
+    }
+
+    private List<KnowledgeResultItemDto> rankMergedResults(List<KnowledgeResultItemDto> items, String query) {
+        String normalizedQuery = query == null ? "" : query.toLowerCase(Locale.ROOT);
+
+        return items.stream()
+                .sorted(Comparator
+                        .comparingInt((KnowledgeResultItemDto item) -> boostedScore(item, normalizedQuery))
+                        .reversed()
+                        .thenComparing(KnowledgeResultItemDto::title, Comparator.nullsLast(String::compareToIgnoreCase)))
+                .toList();
+    }
+
+    private int boostedScore(KnowledgeResultItemDto item, String normalizedQuery) {
+        int base = score(item);
+
+        if (item.sourceType() == com.vena.codesage.dto.KnowledgeSourceType.CONFLUENCE && item.metadata() != null) {
+            Object classNames = item.metadata().get("classNames");
+            Object endpoints = item.metadata().get("endpoints");
+
+            if (classNames instanceof List<?> list && !list.isEmpty()) {
+                base += 8;
+            }
+            if (endpoints instanceof List<?> list && !list.isEmpty()) {
+                base += 10;
+            }
+        }
+
+        String title = item.title() == null ? "" : item.title().toLowerCase(Locale.ROOT);
+        String snippet = item.snippet() == null ? "" : item.snippet().toLowerCase(Locale.ROOT);
+
+        if (!normalizedQuery.isBlank() && title.contains(normalizedQuery)) {
+            base += 15;
+        } else if (!normalizedQuery.isBlank() && snippet.contains(normalizedQuery)) {
+            base += 5;
+        }
+
+        return base;
+    }
+
 }

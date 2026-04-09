@@ -14,7 +14,7 @@ import java.nio.file.Path;
 public class TouchpointsIngestionJob {
 
     private final PostgresCopyLoader copyLoader;
-    private static final Logger LOGGER = LoggerFactory.getLogger(ApiEndpointsIngestionJob.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(TouchpointsIngestionJob.class);
     private final JdbcTemplate jdbcTemplate;
 
     public TouchpointsIngestionJob(PostgresCopyLoader copyLoader, JdbcTemplate jdbcTemplate) {

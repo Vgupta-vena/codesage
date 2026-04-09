@@ -85,8 +85,7 @@ public class ReverseTraversalService {
                         effectiveLimit,
                         false
                 ).stream()
-                .map(endpoint -> new KnowledgeResultItemDto(
-                        "ENDPOINT",
+                .map(endpoint -> KnowledgeResultItemDto.endpoint(
                         endpoint.methodQualifiedName(),
                         endpoint.httpMethod() + " " + endpoint.path(),
                         endpoint.filePath(),
