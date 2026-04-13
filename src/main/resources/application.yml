@@ -72,7 +72,7 @@ codesage:
     base-dir: ${CODESAGE_DATA_DIR:./data}
 app:
   atlassian:
-    enabled: false
+    enabled: true
     base-url: https://venasolutions.atlassian.net
     username: vgupta@venacorp.com
     api-token: ${CONFLUENCE_API_TOKEN:}
@@ -85,5 +85,5 @@ app:
       project-key: Product & Technology
     confluence:
       enabled: true
-      space-key: Vena Development
+      space-key: arch
       max-results: 10

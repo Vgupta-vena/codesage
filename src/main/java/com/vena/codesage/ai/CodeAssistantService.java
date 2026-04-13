@@ -23,136 +23,15 @@ public class CodeAssistantService {
     private final CodeIntelligenceTools tools;
     private final CodebaseKnowledgeService codebaseKnowledgeService;
     private final ReverseTraversalService reverseTraversalService;
-    private final IssueInvestigationService investigationService;
 
     public CodeAssistantService(ChatClient chatClient,
                                 CodeIntelligenceTools tools,
                                 CodebaseKnowledgeService codebaseKnowledgeService,
-                                ReverseTraversalService reverseTraversalService, IssueInvestigationService investigationService) {
+                                ReverseTraversalService reverseTraversalService) {
         this.chatClient = chatClient;
         this.tools = tools;
         this.codebaseKnowledgeService = codebaseKnowledgeService;
         this.reverseTraversalService = reverseTraversalService;
-        this.investigationService = investigationService;
-    }
-
-    public String ask(String projectKey, String question) {
-
-        long startNanos = System.nanoTime();
-        boolean jiraIssueQuery = looksLikeJiraIssueKey(question);
-        boolean isProblem = jiraIssueQuery || isProblemQuery(question);
-
-        KnowledgeResponseDto knowledge;
-        TraceResponseDto trace;
-        String investigationBlock = "";
-
-        if (isProblem) {
-            var investigation = jiraIssueQuery
-                    ? investigationService.investigateIssue(projectKey, extractJiraIssueKey(question))
-                    : investigationService.investigate(projectKey, question);
-
-            knowledge = new KnowledgeResponseDto(
-                    projectKey,
-                    question,
-                    KnowledgeMode.AUTO,
-                    investigation.summary(),
-                    investigation.evidence(),
-                    investigation.evidence().size(),
-                    investigation.evidence().stream()
-                            .map(item -> item.sourceType() == null ? null : item.sourceType().name())
-                            .filter(s -> s != null && !s.isBlank())
-                            .distinct()
-                            .toList(),
-                    null
-            );
-
-            trace = null;
-
-            investigationBlock = """
-                    Problem Analysis:
-                    Summary: %s
-            
-                    Hypotheses:
-                    %s
-            
-                    Suggested Changes:
-                    %s
-            
-                    Candidate Change Targets:
-                    %s
-                    """.formatted(
-                                investigation.summary(),
-                                formatBullets(investigation.hypotheses()),
-                                formatSuggestedChanges(investigation.suggestedChanges()),
-                                formatCandidateTargets(investigation.candidateChangeTargets())
-                        );
-        } else {
-            knowledge = codebaseKnowledgeService.query(
-                    projectKey,
-                    question,
-                    8,
-                    false,
-                    KnowledgeMode.AUTO,
-                    true,
-                    null
-            );
-
-            trace = buildBestEffortTrace(projectKey, knowledge);
-        }
-
-        String userMessage = """
-                Project Key: %s
-
-                Retrieved Knowledge:
-                %s
-                
-                %s
-
-                Reverse/Forward Trace:
-                %s
-
-                Question:
-                %s
-                """.formatted(
-                projectKey,
-                formatKnowledge(knowledge),
-                investigationBlock,
-                formatTrace(trace),
-                question
-        );
-
-        try {
-            String response = chatClient.prompt()
-                    .system(SystemPrompts.CODE_ASSISTANT)
-                    .user(userMessage)
-                    .tools(tools)
-                    .call()
-                    .content();
-
-            long elapsedMillis = (System.nanoTime() - startNanos) / 1_000_000;
-            LOGGER.info(
-                    "Chat ask completed projectKey={} questionLength={} knowledgeResults={} sources={} elapsedMs={}",
-                    projectKey,
-                    question == null ? 0 : question.length(),
-                    knowledge.resultCount(),
-                    knowledge.sourcesUsed(),
-                    elapsedMillis
-            );
-
-            return response;
-        } catch (Exception e) {
-            LOGGER.error(
-                    "Chat ask failed projectKey={} question={} knowledgeMode={} resultCount={} error={}",
-                    projectKey,
-                    question,
-                    knowledge.mode(),
-                    knowledge.resultCount(),
-                    e.getMessage(),
-                    e
-            );
-
-            return buildFallbackAnswer(question, knowledge, trace, e);
-        }
     }
 
     private TraceResponseDto buildBestEffortTrace(String projectKey, KnowledgeResponseDto knowledge) {

@@ -7,7 +7,6 @@ import com.vena.codesage.dto.KnowledgeResponseDto;
 import com.vena.codesage.dto.KnowledgeResultItemDto;
 import com.vena.codesage.dto.SemanticSearchResultDto;
 import com.vena.codesage.dto.TraceDirection;
-import com.vena.codesage.integration.confluence.ConfluenceKnowledgeService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -35,17 +34,15 @@ public class CodebaseKnowledgeService {
     private final EndpointSearchService endpointSearchService;
     private final ReverseTraversalService reverseTraversalService;
     private final Map<KnowledgeMode, Function<QueryContext, List<KnowledgeResultItemDto>>> handlers;
-    private final ConfluenceKnowledgeService confluenceKnowledgeService;
 
     public CodebaseKnowledgeService(CodeEntityService codeEntityService,
                                     SemanticDocumentBuilderService semanticDocumentBuilderService,
                                     EndpointSearchService endpointSearchService,
-                                    ReverseTraversalService reverseTraversalService, ConfluenceKnowledgeService confluenceKnowledgeService) {
+                                    ReverseTraversalService reverseTraversalService) {
         this.codeEntityService = codeEntityService;
         this.semanticDocumentBuilderService = semanticDocumentBuilderService;
         this.endpointSearchService = endpointSearchService;
         this.reverseTraversalService = reverseTraversalService;
-        this.confluenceKnowledgeService = confluenceKnowledgeService;
         this.handlers = buildHandlers();
     }
 
@@ -247,22 +244,16 @@ public class CodebaseKnowledgeService {
                 .map(item -> toSemanticItem(context.projectKey(), item))
                 .toList();
 
-        List<KnowledgeResultItemDto> confluenceResults = confluenceKnowledgeService.search(
-                context.query(),
-                Math.max(3, context.limit() / 2)
-        );
 
         log.debug(
-                "Semantic aggregation returned codeResults={} confluenceResults={} for project={} query={}",
+                "Semantic aggregation returned codeResults={} for project={} query={}",
                 codeResults.size(),
-                confluenceResults.size(),
                 context.projectKey(),
                 context.query()
         );
 
-        List<KnowledgeResultItemDto> merged = new ArrayList<>(codeResults.size() + confluenceResults.size());
+        List<KnowledgeResultItemDto> merged = new ArrayList<>(codeResults.size());
         merged.addAll(codeResults);
-        merged.addAll(confluenceResults);
 
         if (context.collapse()) {
             merged = collapseByIdentity(merged);

@@ -15,11 +15,4 @@ public class ChatController {
     public ChatController(CodeAssistantService codeAssistantService) {
         this.codeAssistantService = codeAssistantService;
     }
-
-    @PostMapping("/ask")
-    public AskResponse ask(@Valid @RequestBody AskRequest request) {
-        return new AskResponse(
-                codeAssistantService.ask(request.projectKey(), request.question())
-        );
-    }
 }
