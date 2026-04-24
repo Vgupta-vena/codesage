@@ -12,7 +12,6 @@ import com.vena.codesage.graph.repo.TouchpointRepository;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 @Service
 public class CallGraphService {
@@ -778,42 +777,4 @@ public class CallGraphService {
         return result;
     }
 
-    private int scorePath(ExecutionPathDto path) {
-        int score = 0;
-
-        // 🎯 terminal importance
-        if ("PERSISTENCE".equals(path.category())) {
-            score += 100;
-        } else if ("EXTERNAL".equals(path.category())) {
-            score += 80;
-        }
-
-        // 🎯 shorter paths preferred
-        score += Math.max(0, 60 - (path.depth() * 8));
-
-        // 🎯 structural signals
-        for (String node : path.nodes()) {
-            String lower = node.toLowerCase(Locale.ROOT);
-
-            if (lower.contains(".service.")) score += 10;
-            if (lower.contains(".resources.")) score += 5;
-            if (lower.contains("repository") || lower.contains("dao")) score += 15;
-
-            // ⚠️ noise penalty
-            if (lower.contains("hibernate")
-                    || lower.contains("entitymanager")
-                    || lower.contains("metamodel")) {
-                score -= 20;
-            }
-
-            // ⚠️ getter noise
-            if (lower.endsWith(".get")
-                    || lower.contains(".get")
-                    || lower.contains(".is")) {
-                score -= 2;
-            }
-        }
-
-        return score;
-    }
 }

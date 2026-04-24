@@ -1,6 +1,6 @@
 package com.vena.codesage.graph.service;
 
-import com.vena.codesage.dto.KnowledgeResultItemDto;
+import com.vena.codesage.dto.EndpointSearchResultDto;
 import com.vena.codesage.graph.model.EndpointMapping;
 import com.vena.codesage.graph.model.ScanRun;
 import com.vena.codesage.graph.repo.EndpointMappingRepository;
@@ -27,7 +27,7 @@ public class EndpointSearchService {
         this.scanManagerService = scanManagerService;
     }
 
-    public List<KnowledgeResultItemDto> search(String projectKey,
+    public List<EndpointSearchResultDto> search(String projectKey,
                                                String query,
                                                Integer limit,
                                                Boolean includeUnresolved) {
@@ -290,24 +290,15 @@ public class EndpointSearchService {
                 || filePath.contains("/controllers/");
     }
 
-    private KnowledgeResultItemDto toItem(EndpointMapping endpoint, int score) {
+    private EndpointSearchResultDto toItem(EndpointMapping endpoint, int score) {
         String path = buildPath(endpoint.getClassPath(), endpoint.getMethodPath());
-        return new KnowledgeResultItemDto(
-                "ENDPOINT",
-                com.vena.codesage.dto.KnowledgeSourceType.CODE,
-                null,
-                endpoint.getMethodQualifiedName(),
-                endpoint.getHttpMethod() + " " + path,
-                endpoint.getFilePath(),
-                isUnresolved(endpoint) ? "Endpoint mapping with unresolved path" : "Resolved endpoint mapping",
-                score,
-                List.of(),
-                Map.of(
-                        "httpMethod", nullSafe(endpoint.getHttpMethod()),
-                        "path", path,
-                        "methodQualifiedName", nullSafe(endpoint.getMethodQualifiedName()),
-                        "unresolvedPath", isUnresolved(endpoint)
-                )
+        return new EndpointSearchResultDto(
+                nullSafe(endpoint.getHttpMethod()),
+                path,
+                nullSafe(endpoint.getMethodQualifiedName()),
+                nullSafe(endpoint.getFilePath()),
+                isUnresolved(endpoint),
+                score
         );
     }
 

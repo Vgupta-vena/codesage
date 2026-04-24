@@ -7,7 +7,6 @@ import com.vena.codesage.dto.StartScanResponse;
 import com.vena.codesage.graph.model.ScanRun;
 import com.vena.codesage.graph.model.ScanStatus;
 import com.vena.codesage.graph.repo.ScanRunRepository;
-import com.vena.codesage.ingestion.IngestionPipeline;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;

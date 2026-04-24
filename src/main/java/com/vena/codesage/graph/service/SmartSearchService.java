@@ -389,63 +389,6 @@ public class SmartSearchService {
         return value == null ? "" : value.toLowerCase(Locale.ROOT);
     }
 
-    private List<SmartSearchResultDto> rankPathQueryResults(List<SmartSearchResultDto> results, String query) {
-        String normalizedQuery = normalizePath(query);
-
-        List<SmartSearchResultDto> exact = new ArrayList<>();
-        List<SmartSearchResultDto> children = new ArrayList<>();
-        List<SmartSearchResultDto> related = new ArrayList<>();
-        List<SmartSearchResultDto> others = new ArrayList<>();
-
-        for (SmartSearchResultDto result : results) {
-            String path = extractPathFromSubtitle(result.subtitle());
-
-            if (path.equals(normalizedQuery)) {
-                exact.add(result);
-            } else if (path.startsWith(normalizedQuery + "/")) {
-                children.add(result);
-            } else if (path.contains(normalizedQuery) || normalizedQuery.contains(path)) {
-                related.add(result);
-            } else {
-                others.add(result);
-            }
-        }
-
-        Comparator<SmartSearchResultDto> byScoreDesc = (left, right) ->
-                Integer.compare(
-                        right.score() == null ? 0 : right.score(),
-                        left.score() == null ? 0 : left.score()
-                );
-
-        exact.sort(byScoreDesc);
-        children.sort(byScoreDesc);
-        related.sort(byScoreDesc);
-        others.sort(byScoreDesc);
-
-        List<SmartSearchResultDto> ranked = new ArrayList<>(results.size());
-        ranked.addAll(exact);
-        ranked.addAll(children);
-        ranked.addAll(related);
-        ranked.addAll(others);
-
-        return ranked;
-    }
-
-    private String extractPathFromSubtitle(String subtitle) {
-        if (subtitle == null || subtitle.isBlank()) {
-            return "";
-        }
-
-        String trimmed = subtitle.trim();
-        int pathStart = trimmed.indexOf('/');
-
-        if (pathStart < 0) {
-            return "";
-        }
-
-        return normalizePath(trimmed.substring(pathStart));
-    }
-
     private List<EndpointSearchResultDto> rankRawEndpointPathResults(List<EndpointSearchResultDto> results, String query) {
         String normalizedQuery = normalizePath(query);
 
