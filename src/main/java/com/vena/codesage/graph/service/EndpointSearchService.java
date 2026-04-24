@@ -1,6 +1,6 @@
 package com.vena.codesage.graph.service;
 
-import com.vena.codesage.dto.EndpointSearchResultDto;
+import com.vena.codesage.dto.KnowledgeResultItemDto;
 import com.vena.codesage.graph.model.EndpointMapping;
 import com.vena.codesage.graph.model.ScanRun;
 import com.vena.codesage.graph.repo.EndpointMappingRepository;
@@ -27,10 +27,10 @@ public class EndpointSearchService {
         this.scanManagerService = scanManagerService;
     }
 
-    public List<EndpointSearchResultDto> search(String projectKey,
-                                                String query,
-                                                Integer limit,
-                                                Boolean includeUnresolved) {
+    public List<KnowledgeResultItemDto> search(String projectKey,
+                                               String query,
+                                               Integer limit,
+                                               Boolean includeUnresolved) {
         String normalizedQuery = normalize(query);
         if (normalizedQuery.isBlank()) {
             return List.of();
@@ -54,7 +54,7 @@ public class EndpointSearchService {
 
         return dedupe(scored).stream()
                 .limit(effectiveLimit)
-                .map(se -> toDto(se.endpoint(), se.score()))
+                .map(se -> toItem(se.endpoint(), se.score()))
                 .toList();
     }
 
@@ -92,7 +92,7 @@ public class EndpointSearchService {
         String declaringType = extractDeclaringType(methodQualifiedName);
         String declaringTypeShort = extractLastSegment(declaringType);
 
-        String[] tokens = query.split("\\s+");
+        String[] tokens = query.split("\s+");
 
         if (methodQualifiedName.equals(query)) {
             score += 300;
@@ -290,14 +290,24 @@ public class EndpointSearchService {
                 || filePath.contains("/controllers/");
     }
 
-    private EndpointSearchResultDto toDto(EndpointMapping endpoint, int score) {
-        return new EndpointSearchResultDto(
-                endpoint.getHttpMethod(),
-                buildPath(endpoint.getClassPath(), endpoint.getMethodPath()),
+    private KnowledgeResultItemDto toItem(EndpointMapping endpoint, int score) {
+        String path = buildPath(endpoint.getClassPath(), endpoint.getMethodPath());
+        return new KnowledgeResultItemDto(
+                "ENDPOINT",
+                com.vena.codesage.dto.KnowledgeSourceType.CODE,
+                null,
                 endpoint.getMethodQualifiedName(),
+                endpoint.getHttpMethod() + " " + path,
                 endpoint.getFilePath(),
-                isUnresolved(endpoint),
-                score
+                isUnresolved(endpoint) ? "Endpoint mapping with unresolved path" : "Resolved endpoint mapping",
+                score,
+                List.of(),
+                Map.of(
+                        "httpMethod", nullSafe(endpoint.getHttpMethod()),
+                        "path", path,
+                        "methodQualifiedName", nullSafe(endpoint.getMethodQualifiedName()),
+                        "unresolvedPath", isUnresolved(endpoint)
+                )
         );
     }
 
@@ -378,6 +388,10 @@ public class EndpointSearchService {
 
     private String safe(String value) {
         return value == null ? "" : value.toLowerCase(Locale.ROOT);
+    }
+
+    private String nullSafe(String value) {
+        return value == null ? "" : value;
     }
 
     private record ScoredEndpoint(EndpointMapping endpoint, int score) {
