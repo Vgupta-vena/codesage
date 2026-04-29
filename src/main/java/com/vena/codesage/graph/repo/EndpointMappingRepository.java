@@ -11,5 +11,8 @@ public interface EndpointMappingRepository extends JpaRepository<EndpointMapping
 
     List<EndpointMapping> findByScanRunIdAndMethodQualifiedNameStartingWith(Long scanRunId, String prefix);
 
+    List<EndpointMapping> findTop10ByScanRunIdAndMethodQualifiedNameContainingIgnoreCase(Long scanRunId, String fragment);
+
     List<EndpointMapping> findByScanRunId(Long scanRunId);
+
 }
